@@ -1,0 +1,182 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Creates a private VPC, subnet, route table, security group, IAM instance profile,
+  VPC endpoints for SSM, and an EC2 instance with SSM Agent enabled.
+  Created by Suresh Puram.
+
+Parameters:
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+    Description: Latest Amazon Linux 2 AMI ID from SSM Parameter Store
+
+Resources:
+  ## --- VPC ---
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: PrivateVPC
+
+  ## --- Private Subnet ---
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet
+
+  ## --- Route Table (Private) ---
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PrivateRouteTable
+
+  ## --- Associate Private Subnet with Private Route Table ---
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  ## --- Security Group ---
+  PrivateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow internal VPC traffic
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          CidrIp: 10.0.0.0/16
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: PrivateSecurityGroup
+
+  ## --- IAM Role with Admin + SSM Policies ---
+  EC2AdminRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Name
+          Value: EC2AdminRole
+
+  ## --- Instance Profile ---
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2AdminRole
+      InstanceProfileName: AdminInstanceProfile
+      Path: /
+
+  ## --- VPC Endpoints for SSM ---
+  VPCEndpointSSM:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref PrivateSecurityGroup
+      PrivateDnsEnabled: true
+
+  VPCEndpointEC2Messages:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref PrivateSecurityGroup
+      PrivateDnsEnabled: true
+
+  VPCEndpointSSMMessages:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref PrivateSecurityGroup
+      PrivateDnsEnabled: true
+
+  ## --- EC2 Instance ---
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      KeyName: ct-keypair
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref PrivateSecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      ImageId: !Ref LatestAmiId
+      Tags:
+        - Key: Name
+          Value: PrivateEC2Instance
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          echo "Initializing EC2 with SSM Agent" > /var/log/ssm-init.log
+          yum update -y
+          if ! systemctl status amazon-ssm-agent &>/dev/null; then
+            yum install -y amazon-ssm-agent
+            systemctl enable amazon-ssm-agent
+            systemctl start amazon-ssm-agent
+          fi
+          echo "SSM Agent setup complete at $(date)" >> /var/log/ssm-init.log
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref VPC
+
+  PrivateSubnetId:
+    Description: Private Subnet ID
+    Value: !Ref PrivateSubnet
+
+  SecurityGroupId:
+    Description: Security Group ID
+    Value: !Ref PrivateSecurityGroup
+
+  InstanceProfile:
+    Description: IAM Instance Profile Name
+    Value: !Ref EC2InstanceProfile
+
+  RoleName:
+    Description: IAM Role Name
+    Value: !Ref EC2AdminRole
+
+  EC2InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref EC2Instance
