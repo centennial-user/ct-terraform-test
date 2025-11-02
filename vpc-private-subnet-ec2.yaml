@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Creates a private VPC, subnet, route table, security group, IAM instance profile,
-  VPC endpoints for SSM, and an EC2 instance with SSM Agent enabled.
-  Created by Suresh Puram.
+  Creates a private VPC, public subnet with NAT Gateway, private subnet, route tables,
+  security group, IAM instance profile, VPC endpoints for SSM, and an EC2 instance 
+  with SSM Agent enabled, Created by Suresh Puram.
 
 Parameters:
   LatestAmiId:
@@ -22,6 +22,47 @@ Resources:
         - Key: Name
           Value: PrivateVPC
 
+  ## --- Public Subnet (for NAT) ---
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: PublicSubnet
+
+  ## --- Internet Gateway ---
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: PublicIGW
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  ## --- NAT Gateway ---
+  EIPForNAT:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt EIPForNAT.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: PrivateNAT
+
   ## --- Private Subnet ---
   PrivateSubnet:
     Type: AWS::EC2::Subnet
@@ -34,7 +75,15 @@ Resources:
         - Key: Name
           Value: PrivateSubnet
 
-  ## --- Route Table (Private) ---
+  ## --- Route Tables ---
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PublicRouteTable
+
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -43,7 +92,28 @@ Resources:
         - Key: Name
           Value: PrivateRouteTable
 
-  ## --- Associate Private Subnet with Private Route Table ---
+  ## --- Routes ---
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  ## --- Subnet Associations ---
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
   PrivateSubnetRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
@@ -134,7 +204,7 @@ Resources:
   EC2Instance:
     Type: AWS::EC2::Instance
     Properties:
-      InstanceType: t3.micro
+      InstanceType: m5.large
       KeyName: ct-keypair
       SubnetId: !Ref PrivateSubnet
       SecurityGroupIds:
@@ -147,14 +217,20 @@ Resources:
       UserData:
         Fn::Base64: |
           #!/bin/bash
-          echo "Initializing EC2 with SSM Agent" > /var/log/ssm-init.log
+          echo "Initializing EC2 with SSM Agent and Terraform" > /var/log/ssm-init.log
           yum update -y
+          # Install SSM Agent if missing
           if ! systemctl status amazon-ssm-agent &>/dev/null; then
             yum install -y amazon-ssm-agent
             systemctl enable amazon-ssm-agent
             systemctl start amazon-ssm-agent
           fi
-          echo "SSM Agent setup complete at $(date)" >> /var/log/ssm-init.log
+          # Install Terraform
+          yum install -y yum-utils unzip curl
+          yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
+          yum -y install terraform
+          terraform -version >> /var/log/ssm-init.log
+          echo "Setup complete at $(date)" >> /var/log/ssm-init.log
 
 Outputs:
   VPCId:
@@ -164,6 +240,10 @@ Outputs:
   PrivateSubnetId:
     Description: Private Subnet ID
     Value: !Ref PrivateSubnet
+
+  PublicSubnetId:
+    Description: Public Subnet ID
+    Value: !Ref PublicSubnet
 
   SecurityGroupId:
     Description: Security Group ID
