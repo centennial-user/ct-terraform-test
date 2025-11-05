@@ -223,7 +223,7 @@ resource "aws_instance" "private_ec2" {
   EOF
 
   tags = {
-    Name = "tfec2instance_venkat"
+    Name = "tfec2_venkat"
   }
 }
 
