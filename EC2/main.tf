@@ -26,6 +26,18 @@ resource "aws_subnet" "public_subnet" {
   }
 }
 
+# Private Subnet
+resource "aws_subnet" "private_subnet" {
+  vpc_id                  = aws_vpc.private_vpc.id
+  cidr_block              = "10.0.1.0/24"
+  map_public_ip_on_launch = false
+  availability_zone       = data.aws_availability_zones.available.names[0]
+
+  tags = {
+    Name = "PrivateSubnet"
+  }
+}
+
 # Internet Gateway
 resource "aws_internet_gateway" "public_igw" {
   vpc_id = aws_vpc.private_vpc.id
@@ -49,18 +61,6 @@ resource "aws_nat_gateway" "private_nat" {
 
   tags = {
     Name = "PrivateNAT"
-  }
-}
-
-# Private Subnet
-resource "aws_subnet" "private_subnet" {
-  vpc_id                  = aws_vpc.private_vpc.id
-  cidr_block              = "10.0.1.0/24"
-  map_public_ip_on_launch = false
-  availability_zone       = data.aws_availability_zones.available.names[0]
-
-  tags = {
-    Name = "PrivateSubnet"
   }
 }
 
@@ -164,7 +164,7 @@ resource "aws_iam_role_policy_attachment" "ec2_ssm_attach" {
 
 # Instance Profile
 resource "aws_iam_instance_profile" "ec2_instance_profile" {
-  name = "AdminInstanceProfile1"
+  name = "AdminInstanceProfile"
   path = "/"
   role = aws_iam_role.ec2_admin_role.name
 }
