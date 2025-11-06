@@ -197,6 +197,7 @@ resource "aws_vpc_endpoint" "ssmmessages_endpoint" {
   private_dns_enabled = true
 }
 
+
 # EC2 Instance
 resource "aws_instance" "private_ec2" {
   ami                    = data.aws_ssm_parameter.latest_ami.value
