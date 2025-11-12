@@ -1,0 +1,45 @@
+# Puppet Master and Agent deployment example
+# Copy this to terraform.tfvars.puppet and customize
+
+aws_region = "us-east-1"
+name_prefix = "venkat-puppet"
+
+vpc_cidr = "10.30.0.0/16"
+subnets = [
+  { name = "public-1", cidr = "10.30.0.0/24", map_public_ip_on_launch = true },
+  { name = "private-1", cidr = "10.30.1.0/24" }
+]
+public_subnet_name = "public-1"
+private_subnet_name = "private-1"
+
+# Puppet-specific settings
+enable_puppet = true
+puppet_agent_count = 2
+puppet_instance_type = "t3.small"
+puppet_domain = "puppet.local"
+
+# EC2 general settings
+instance_type = "t3.micro"
+key_name = "ct-keypair"
+
+common_tags = {
+  Owner = "venkat"
+  Env   = "dev"
+  Project = "puppet-test"
+}
+
+create_nat = true
+enable_ssm_endpoints = true
+enable_ssm_private_dns = false
+
+allowed_cidrs = ["10.30.0.0/16"]
+
+# Notes:
+# - Puppet Master will be in public-1 subnet with public IP
+# - Puppet Agents will be in private-1 subnet
+# - After apply, you will need to manually sign agent certificates on the master:
+#   ssh -i your-key.pem ec2-user@<puppet-master-public-ip>
+#   sudo puppet cert list
+#   sudo puppet cert sign <agent-name>
+# - Then agents will pull and apply their manifests
+# - Test files will appear in /tmp/puppet_*.txt on agents

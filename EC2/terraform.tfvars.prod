@@ -1,0 +1,25 @@
+# Production environment variables
+aws_region = "us-east-1"
+name_prefix = "venkat-prod"
+
+vpc_cidr = "10.20.0.0/16"
+subnets = [
+  { name = "public-1", cidr = "10.20.0.0/24", map_public_ip_on_launch = true },
+  { name = "private-1", cidr = "10.20.1.0/24" }
+]
+public_subnet_name = "public-1"
+private_subnet_name = "private-1"
+
+instance_type = "m5.large"
+key_name = "ct-keypair"
+
+common_tags = {
+  Owner = "venkat"
+  Env   = "prod"
+}
+
+create_nat = true
+enable_ssm_endpoints = true
+enable_ssm_private_dns = false
+
+allowed_cidrs = ["10.20.0.0/16"]

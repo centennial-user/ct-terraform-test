@@ -1,0 +1,32 @@
+# Example terraform.tfvars for EC2/ VPC deployment
+aws_region = "us-east-1"
+name_prefix = "venkat"
+
+# VPC and subnets
+vpc_cidr = "10.0.0.0/16"
+subnets = [
+  { name = "public-1", cidr = "10.0.0.0/24", map_public_ip_on_launch = true },
+  { name = "private-1", cidr = "10.0.1.0/24" }
+]
+public_subnet_name = "public-1"
+private_subnet_name = "private-1"
+
+# Instance
+instance_type = "t3.small"
+key_name = "ct-keypair"
+
+# Tags
+common_tags = {
+  Owner = "venkat"
+  Env   = "int"
+}
+
+# NAT and endpoints
+create_nat = true
+enable_ssm_endpoints = true
+# Keep private DNS disabled by default to avoid conflicts. Change to true only if
+# you have confirmed no conflicting private hosted zone or existing endpoint.
+enable_ssm_private_dns = false
+
+# Security group allowed CIDRs
+allowed_cidrs = ["10.0.0.0/16"]
