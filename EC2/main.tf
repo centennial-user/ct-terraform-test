@@ -1,29 +1,26 @@
 # main.tf
-provider "aws" {
+/* provider "aws" {
   region = var.aws_region  # Change as needed
 }
 
 # VPC
 resource "aws_vpc" "private_vpc" {
-  cidr_block           = "10.0.0.0/16"
+  cidr_block           = var.vpc_cidr
   enable_dns_support   = true
   enable_dns_hostnames = true
-
-  tags = {
-    Name = "PrivateVPC"
-  }
+  tags = merge(var.common_tags, { Name = "${var.name_prefix}-vpc" })
 }
 
 # Public Subnet
-resource "aws_subnet" "public_subnet" {
-  vpc_id                  = aws_vpc.private_vpc.id
-  cidr_block              = "10.0.0.0/24"
-  map_public_ip_on_launch = true
-  availability_zone       = data.aws_availability_zones.available.names[0]
+resource "aws_subnet" "subnets" {
+  for_each = { for s in var.subnets : s.name => s }
 
-  tags = {
-    Name = "PublicSubnet"
-  }
+  vpc_id                  = aws_vpc.private_vpc.id
+  cidr_block              = each.value.cidr
+  availability_zone       = each.value.availability_zone != null ? each.value.availability_zone : data.aws_availability_zones.available.names[0]
+  map_public_ip_on_launch = lookup(each.value, "map_public_ip_on_launch", false)
+
+  tags = merge(var.common_tags, { Name = "${var.name_prefix}-${each.key}" })
 }
 
 # Private Subnet
@@ -49,19 +46,15 @@ resource "aws_internet_gateway" "public_igw" {
 
 # NAT Gateway
 resource "aws_eip" "nat_eip" {
-  # 'vpc' argument removed as it's not supported by the provider version in use.
-  tags = {
-    Name = "NatEIP"
-  }
+  count = var.create_nat ? 1 : 0
+  tags  = merge(var.common_tags, { Name = "${var.name_prefix}-nat-eip" })
 }
 
 resource "aws_nat_gateway" "private_nat" {
-  allocation_id = aws_eip.nat_eip.id
-  subnet_id     = aws_subnet.public_subnet.id
-
-  tags = {
-    Name = "PrivateNAT"
-  }
+  count         = var.create_nat ? 1 : 0
+  allocation_id = aws_eip.nat_eip[0].id
+  subnet_id     = aws_subnet.subnets["public-1"].id
+  tags = merge(var.common_tags, { Name = "${var.name_prefix}-nat" })
 }
 
 # Route Tables
@@ -88,26 +81,98 @@ resource "aws_route" "public_route" {
   gateway_id             = aws_internet_gateway.public_igw.id
 }
 
-resource "aws_route" "private_route" {
-  route_table_id         = aws_route_table.private_route_table.id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.private_nat.id
+*/
+
+// Refactored main.tf to use variables, for_each and safer defaults
+provider "aws" {
+  region = var.aws_region
 }
 
-# Subnet Associations
+data "aws_availability_zones" "available" {}
+
+// VPC
+resource "aws_vpc" "private_vpc" {
+  cidr_block           = var.vpc_cidr
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = merge(var.common_tags, { Name = "${var.name_prefix}-vpc" })
+}
+
+// Subnets (created from a variable list)
+resource "aws_subnet" "subnets" {
+  for_each = { for s in var.subnets : s.name => s }
+
+  vpc_id                  = aws_vpc.private_vpc.id
+  cidr_block              = each.value.cidr
+  availability_zone       = lookup(each.value, "availability_zone", data.aws_availability_zones.available.names[0])
+  map_public_ip_on_launch = lookup(each.value, "map_public_ip_on_launch", false)
+
+  tags = merge(var.common_tags, { Name = "${var.name_prefix}-${each.key}" })
+}
+
+// Internet Gateway
+resource "aws_internet_gateway" "public_igw" {
+  vpc_id = aws_vpc.private_vpc.id
+
+  tags = merge(var.common_tags, { Name = "${var.name_prefix}-igw" })
+}
+
+// NAT Gateway (optional)
+resource "aws_eip" "nat_eip" {
+  count = var.create_nat ? 1 : 0
+  tags  = merge(var.common_tags, { Name = "${var.name_prefix}-nat-eip" })
+}
+
+resource "aws_nat_gateway" "private_nat" {
+  count         = var.create_nat ? 1 : 0
+  allocation_id = aws_eip.nat_eip[0].id
+  subnet_id     = aws_subnet.subnets[var.public_subnet_name].id
+
+  tags = merge(var.common_tags, { Name = "${var.name_prefix}-nat" })
+}
+
+// Route Tables
+resource "aws_route_table" "public_route_table" {
+  vpc_id = aws_vpc.private_vpc.id
+
+  tags = merge(var.common_tags, { Name = "${var.name_prefix}-public-rt" })
+}
+
+resource "aws_route_table" "private_route_table" {
+  vpc_id = aws_vpc.private_vpc.id
+
+  tags = merge(var.common_tags, { Name = "${var.name_prefix}-private-rt" })
+}
+
+// Routes
+resource "aws_route" "public_route" {
+  route_table_id         = aws_route_table.public_route_table.id
+  destination_cidr_block = "0.0.0.0/0"
+  gateway_id             = aws_internet_gateway.public_igw.id
+}
+
+resource "aws_route" "private_route" {
+  count                  = var.create_nat ? 1 : 0
+  route_table_id         = aws_route_table.private_route_table.id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.private_nat[0].id
+}
+
+// Subnet Associations
 resource "aws_route_table_association" "public_subnet_association" {
-  subnet_id      = aws_subnet.public_subnet.id
+  subnet_id      = aws_subnet.subnets[var.public_subnet_name].id
   route_table_id = aws_route_table.public_route_table.id
 }
 
 resource "aws_route_table_association" "private_subnet_association" {
-  subnet_id      = aws_subnet.private_subnet.id
+  subnet_id      = aws_subnet.subnets[var.private_subnet_name].id
   route_table_id = aws_route_table.private_route_table.id
 }
 
-# Security Group
+// Security Group
 resource "aws_security_group" "private_sg" {
-  name        = "PrivateSecurityGroup"
+  name        = "${var.name_prefix}-sg"
   description = "Allow internal VPC traffic"
   vpc_id      = aws_vpc.private_vpc.id
 
@@ -115,7 +180,7 @@ resource "aws_security_group" "private_sg" {
     protocol    = "-1"
     from_port   = 0
     to_port     = 0
-    cidr_blocks = ["10.0.0.0/16"]
+    cidr_blocks = var.allowed_cidrs
   }
 
   egress {
@@ -125,14 +190,12 @@ resource "aws_security_group" "private_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
-    Name = "PrivateSecurityGroup"
-  }
+  tags = merge(var.common_tags, { Name = "${var.name_prefix}-sg" })
 }
 
-# IAM Role
+// IAM Role
 resource "aws_iam_role" "ec2_admin_role" {
-  name = "EC2AdminRole"
+  name = "${var.name_prefix}-ec2-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -147,9 +210,7 @@ resource "aws_iam_role" "ec2_admin_role" {
     ]
   })
 
-  tags = {
-    Name = "EC2AdminRole"
-  }
+  tags = merge(var.common_tags, { Name = "${var.name_prefix}-ec2-role" })
 }
 
 resource "aws_iam_role_policy_attachment" "ec2_admin_attach" {
@@ -162,48 +223,51 @@ resource "aws_iam_role_policy_attachment" "ec2_ssm_attach" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-# Instance Profile
+// Instance Profile
 resource "aws_iam_instance_profile" "ec2_instance_profile" {
-  name = "AdminInstanceProfile"
+  name = "${var.name_prefix}-instance-profile"
   path = "/"
   role = aws_iam_role.ec2_admin_role.name
 }
 
-# VPC Endpoints for SSM
+// VPC Endpoints for SSM (optional)
 resource "aws_vpc_endpoint" "ssm_endpoint" {
+  count               = var.enable_ssm_endpoints ? 1 : 0
   vpc_id              = aws_vpc.private_vpc.id
   service_name        = "com.amazonaws.${var.aws_region}.ssm"
   vpc_endpoint_type   = "Interface"
-  subnet_ids          = [aws_subnet.private_subnet.id]
+  subnet_ids          = [aws_subnet.subnets[var.private_subnet_name].id]
   security_group_ids  = [aws_security_group.private_sg.id]
-  private_dns_enabled = true
+  private_dns_enabled = var.enable_ssm_private_dns
 }
 
 resource "aws_vpc_endpoint" "ec2messages_endpoint" {
+  count               = var.enable_ssm_endpoints ? 1 : 0
   vpc_id              = aws_vpc.private_vpc.id
   service_name        = "com.amazonaws.${var.aws_region}.ec2messages"
   vpc_endpoint_type   = "Interface"
-  subnet_ids          = [aws_subnet.private_subnet.id]
+  subnet_ids          = [aws_subnet.subnets[var.private_subnet_name].id]
   security_group_ids  = [aws_security_group.private_sg.id]
-  private_dns_enabled = true
+  private_dns_enabled = var.enable_ssm_private_dns
 }
 
 resource "aws_vpc_endpoint" "ssmmessages_endpoint" {
+  count               = var.enable_ssm_endpoints ? 1 : 0
   vpc_id              = aws_vpc.private_vpc.id
   service_name        = "com.amazonaws.${var.aws_region}.ssmmessages"
   vpc_endpoint_type   = "Interface"
-  subnet_ids          = [aws_subnet.private_subnet.id]
+  subnet_ids          = [aws_subnet.subnets[var.private_subnet_name].id]
   security_group_ids  = [aws_security_group.private_sg.id]
-  private_dns_enabled = true
+  private_dns_enabled = var.enable_ssm_private_dns
 }
 
 
-# EC2 Instance
+// EC2 Instance
 resource "aws_instance" "private_ec2" {
   ami                    = data.aws_ssm_parameter.latest_ami.value
-  instance_type          = "m5.large"
-  key_name               = "ct-keypair"
-  subnet_id              = aws_subnet.private_subnet.id
+  instance_type          = var.instance_type
+  key_name               = var.key_name != "" ? var.key_name : null
+  subnet_id              = aws_subnet.subnets[var.private_subnet_name].id
   vpc_security_group_ids = [aws_security_group.private_sg.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2_instance_profile.name
 
@@ -223,29 +287,25 @@ resource "aws_instance" "private_ec2" {
     echo "Setup complete at $(date)" >> /var/log/ssm-init.log
   EOF
 
-  tags = {
-    Name = "tfec2_venkat"
-  }
+  tags = merge(var.common_tags, { Name = "${var.name_prefix}-ec2" })
 }
 
-# Data sources
-data "aws_availability_zones" "available" {}
-
+// Data sources
 data "aws_ssm_parameter" "latest_ami" {
   name = "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"
 }
 
-# Outputs
+// Outputs
 output "vpc_id" {
   value = aws_vpc.private_vpc.id
 }
 
 output "private_subnet_id" {
-  value = aws_subnet.private_subnet.id
+  value = aws_subnet.subnets[var.private_subnet_name].id
 }
 
 output "public_subnet_id" {
-  value = aws_subnet.public_subnet.id
+  value = aws_subnet.subnets[var.public_subnet_name].id
 }
 
 output "security_group_id" {
