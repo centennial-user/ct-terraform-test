@@ -50,6 +50,12 @@ variable "instance_type" {
   default     = "t3.micro"
 }
 
+variable "puppet_instance_type" {
+  description = "EC2 instance type"
+  type        = string
+  default     = "t3.micro"
+}
+
 variable "key_name" {
   description = "SSH key name (if needed)"
   type        = string
@@ -100,3 +106,21 @@ variable "allowed_cidrs" {
   type        = list(string)
   default     = ["10.0.0.0/16"]
 }
+
+variable "enable_puppet" {
+   description = "Enable Puppet Master and Agent deployment"
+   type        = bool
+   default     = false
+ }
+
+ variable "puppet_agent_count" {  
+   description = "Number of Puppet Agent instances to create"
+   type        = number
+   default     = 1
+ }
+
+ variable "puppet_domain" {
+   description = "Domain name for Puppet Master and Agents"
+   type        = string
+   default     = "puppet.local"
+ }
