@@ -1,32 +1,111 @@
-module "eks" {
-  source  = "terraform-aws-modules/eks/aws"
-  version = ">= 18.0.0" # choose a recent version
-
-  cluster_name    = var.cluster_name
-  cluster_version = var.cluster_version
-  subnets         = data.aws_subnets.default.ids # or specify your subnets
-
-  node_groups = {
-    default = {
-      desired_capacity = var.node_group_desired_capacity
-      max_capacity     = var.node_group_desired_capacity + 1
-      min_capacity     = 1
-
-      instance_types = ["t3.medium"]
-    }
-  }
-
-  # let the module create required IAM roles, security groups, etc.
-  manage_aws_auth = true
-}
-
 # Example data source to use default VPC and subnets (replace with your networking)
 data "aws_vpc" "default" {
   default = true
 }
+
 data "aws_subnets" "default" {
   filter {
     name   = "vpc-id"
     values = [data.aws_vpc.default.id]
   }
+}
+
+# EKS Cluster
+resource "aws_eks_cluster" "main" {
+  name            = "idriss-eks"
+  version         = var.cluster_version
+  role_arn        = aws_iam_role.eks_cluster_role.arn
+  vpc_config {
+    subnet_ids = data.aws_subnets.default.ids
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_cluster_policy
+  ]
+
+  tags = {
+    Name = "idriss"
+  }
+}
+
+# EKS Node Group
+resource "aws_eks_node_group" "main" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "default-node-group"
+  node_role_arn   = aws_iam_role.eks_node_role.arn
+  subnet_ids      = data.aws_subnets.default.ids
+
+  scaling_config {
+    desired_size = var.node_group_desired_capacity
+    max_size     = var.node_group_desired_capacity + 1
+    min_size     = 1
+  }
+
+  instance_types = ["t3.medium"]
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_node_policy,
+    aws_iam_role_policy_attachment.eks_cni_policy,
+    aws_iam_role_policy_attachment.eks_container_registry_policy
+  ]
+
+  tags = {
+    Name = "idriss-node-group"
+  }
+}
+
+# IAM Role for EKS Cluster
+resource "aws_iam_role" "eks_cluster_role" {
+  name = "idriss-eks-cluster-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "eks.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+  role       = aws_iam_role.eks_cluster_role.name
+}
+
+# IAM Role for EKS Nodes
+resource "aws_iam_role" "eks_node_role" {
+  name = "idriss-eks-node-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "eks_node_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role       = aws_iam_role.eks_node_role.name
+}
+
+resource "aws_iam_role_policy_attachment" "eks_cni_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.eks_node_role.name
+}
+
+resource "aws_iam_role_policy_attachment" "eks_container_registry_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.eks_node_role.name
 }

@@ -5,7 +5,7 @@ variable "aws_region" {
 
 variable "cluster_name" {
   type    = string
-  default = "idriss"
+  default = "idriss-eks"
 }
 
 variable "cluster_version" {
