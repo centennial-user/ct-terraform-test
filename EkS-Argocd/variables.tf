@@ -10,7 +10,7 @@ variable "cluster_name" {
 
 variable "cluster_version" {
   type    = string
-  default = "1.27"
+  default = "1.29"
 }
 
 variable "node_group_desired_capacity" {

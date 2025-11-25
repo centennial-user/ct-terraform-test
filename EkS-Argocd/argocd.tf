@@ -14,7 +14,13 @@ provider "kubernetes" {
 }
 
 provider "helm" {
+  kubernetes = {
+    host                   = data.aws_eks_cluster.cluster.endpoint
+    cluster_ca_certificate = base64decode(data.aws_eks_cluster.cluster.certificate_authority[0].data)
+    token                  = data.aws_eks_cluster_auth.cluster.token
+  }
 }
+
 
 resource "helm_release" "argocd" {
   name             = "idriss-argocd"
@@ -38,4 +44,14 @@ EOF
   ]
 
   depends_on = [aws_eks_node_group.main]
+}
+
+# Read the Argo CD server Service to expose its LoadBalancer address
+data "kubernetes_service" "argocd_server" {
+  metadata {
+    name      = "argocd-server"
+    namespace = "idriss-argocd"
+  }
+
+  depends_on = [helm_release.argocd]
 }
